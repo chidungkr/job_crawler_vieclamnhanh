@@ -13,6 +13,7 @@ library(stringr)
 library(httr)
 
 
+options(timeout = 10000000)
 
 # Hàm lấy ra link về việc làm của từng trang đơn lẻ: 
 get_link <- function(your_link) {
@@ -24,6 +25,10 @@ get_link <- function(your_link) {
     m <- m[m %>% str_detect("https://www.timviecnhanh.com/")]
     m <- m[m %>% str_detect("title=")]
     m <- m[m %>% str_detect("class")]
+    m <- m[!m %>% str_detect("nofollow")]
+    m <- m[!m %>% str_detect("btn-create-hs")]
+    m <- m[!m %>% str_detect("bd-left")]
+    m <- m[!m %>% str_detect("Kinh doanh táº¡i")]
     
     u1 <- str_locate(m, "https://") %>% as.data.frame() %>% pull(start)
     u2 <- str_locate(m, "html") %>% as.data.frame() %>% pull(end)
@@ -42,7 +47,7 @@ get_link <- function(your_link) {
 # Hàm lấy ra tất cả các link của một nhóm công việc được tuyển dụng: 
 
 
-get_link_job_group <- function(base_url, n_pages) {
+get_link_job_group1 <- function(base_url, n_pages) {
   
   all_pages <- paste0(base_url, 1:n_pages)
   job_list <- vector("list", length = n_pages)
@@ -56,6 +61,50 @@ get_link_job_group <- function(base_url, n_pages) {
   
 }
 
+# Có lẽ nên cải tiến đoạn mã trên: 
+
+test1 <- c("https://www.timviecnhanh.com/viec-lam-kinh-doanh-c32.html?page=1", 
+           "https://www.timviecnhanh.com/viec-lam-kinh-doanh-c32.html?page=2", 
+           "https://www.timviecnhanh.com/viec-lam-kinh-doanh-c32.html?page=3")
+
+u <- lapply(test1, get_link)
+
+# Kiểm tra xem thằng nào nhanh hơn: 
+
+library(microbenchmark)
+
+microbenchmark(
+  c1 <- get_link_job_group("https://www.timviecnhanh.com/viec-lam-kinh-doanh-c32.html?page=", 3), 
+  c2 <- lapply(test1, get_link), 
+  times = 5
+)
+
+# Điều này cho thấy cách thứ hai nhanh hơn. Cải tiến kiểu khác: 
+
+
+get_link_job_group2 <- function(base_url, n_pages) {
+  
+  all_pages <- paste0(base_url, 1:n_pages)
+  
+  
+  job_list <- tryCatch(
+    job_list <- lapply(all_pages, get_link)
+  )
+  
+  all_pages_df <- do.call("bind_rows", job_list)
+  return(all_pages_df %>% filter(!duplicated(link_source)) %>% na.omit())
+  
+}
+
+# Kiểu thứ hai nhanh hơn: 
+
+microbenchmark(
+  get_link_job_group1("https://www.timviecnhanh.com/viec-lam-kinh-doanh-c32.html?page=", 3), 
+  get_link_job_group2("https://www.timviecnhanh.com/viec-lam-kinh-doanh-c32.html?page=", 3), 
+  times = 5
+)
+
+
 
 #=========================================================
 # Phần thứ hai: Lấy ra thông tin về công việc ở mỗi link
@@ -68,12 +117,14 @@ job_crawler <- function(job_link) {
   k <- http_status(GET(job_link))
   
   if (k$category == "Success") {
+    Sys.sleep(5)
     read_html(job_link) -> k
     # Mảng thông tin thứ nhất (mức lương, kinh nghiệm...): 
     html_nodes(k, xpath = '//*[@id="left-content"]/article/div[5]/div[1]/ul') %>% 
       html_text() %>% 
       str_replace_all("\n", "") %>% 
-      str_trim() -> p
+      str_trim() %>% 
+      as.character() -> p
     
     
     str_split(p, "   ", simplify = TRUE) %>% as.vector() -> p
@@ -87,7 +138,8 @@ job_crawler <- function(job_link) {
     html_nodes(k, xpath = '//*[@id="left-content"]/article/div[5]/div[2]/ul') %>% 
       html_text() %>% 
       str_replace_all("\n", "") %>% 
-      str_trim() -> p
+      str_trim() %>% 
+      as.character()-> p
     
     str_split(p, "   ", simplify = TRUE) %>% as.vector() -> p
     p <- p[str_count(p) != 0]
@@ -96,22 +148,22 @@ job_crawler <- function(job_link) {
     u$V2 %>% as.character() -> thong_tin2
     
     # Hạn nộp HS: 
-    deadline <- html_nodes(k, xpath = '//*[@id="left-content"]/article/table/tbody/tr[4]/td[2]/b') %>% 
-      html_text() %>% 
-      str_replace_all("\n", "") %>% 
-      str_trim() # Cái này có thể không có. 
+    # deadline <- html_nodes(k, xpath = '//*[@id="left-content"]/article/table/tbody/tr[4]/td[2]/b') %>%
+    #   html_text() %>%
+    #   str_replace_all("\n", "") %>%
+    #   str_trim() # Cái này có thể không có.
     
     # Ngày đăng: 
-    start_date <- html_nodes(k, xpath = '//*[@id="left-content"]/article/div[1]/div[1]/time') %>% 
-      html_text() %>% 
-      str_replace_all("\n", "") %>% 
-      str_trim() # Có thể không có. 
+    # start_date <- html_nodes(k, xpath = '//*[@id="left-content"]/article/div[1]/div[1]/time') %>% 
+    #   html_text() %>% 
+    #   str_replace_all("\n", "") %>% 
+    #   str_trim() # Có thể không có. 
     
     # Tên CV: 
-    job_name <- html_nodes(k, xpath = '//*[@id="left-content"]/header/h1/span') %>% 
-      html_text() %>% 
-      str_replace_all("\n", "") %>% 
-      str_trim()
+    # job_name <- html_nodes(k, xpath = '//*[@id="left-content"]/header/h1/span') %>% 
+    #   html_text() %>% 
+    #   str_replace_all("\n", "") %>% 
+    #   str_trim()
     
     # Tên công ti: 
     # company_name <- html_nodes(k, xpath = '//*[@id="left-content"]/article/div[2]/h3') %>% 
@@ -127,82 +179,84 @@ job_crawler <- function(job_link) {
     
     # Mô tả công việc: 
     
-    html_nodes(k, xpath = '//*[@id="left-content"]/article/table/tbody/tr[1]/td[2]/p') %>% 
-      html_text() %>% 
-      str_replace_all("\n", "") %>% 
-      str_trim() -> mo_ta
+    # html_nodes(k, xpath = '//*[@id="left-content"]/article/table/tbody/tr[1]/td[2]/p') %>% 
+    #   html_text() %>% 
+    #   str_replace_all("\n", "") %>% 
+    #   str_trim() -> mo_ta
     
     # Yêu cầu: 
-    html_nodes(k, xpath = '//*[@id="left-content"]/article/table/tbody/tr[2]/td[2]/p') %>% 
-      html_text() %>% 
-      str_replace_all("\n", "") %>% 
-      str_trim() -> yeu_cau
+    # html_nodes(k, xpath = '//*[@id="left-content"]/article/table/tbody/tr[2]/td[2]/p') %>% 
+    #   html_text() %>% 
+    #   str_replace_all("\n", "") %>% 
+    #   str_trim() -> yeu_cau
     
     # Quyền lợi khác: 
     
-    html_nodes(k, xpath = '//*[@id="left-content"]/article/table/tbody/tr[3]/td[2]') %>% 
-      html_text() %>% 
-      str_replace_all("\n", "") %>% 
-      str_trim() -> quyen_loi
+    # html_nodes(k, xpath = '//*[@id="left-content"]/article/table/tbody/tr[3]/td[2]') %>% 
+    #   html_text() %>% 
+    #   str_replace_all("\n", "") %>% 
+    #   str_trim() -> quyen_loi
     
   }
-  all_info <- c(thong_tin1, 
-                thong_tin2)
   
-  all_info <- matrix(all_info, ncol = 9) %>% as.data.frame()
-  names(all_info) <- c("luong", "kinh_nghiem", "trinh_do", "tinh", 
-                       "nhom_cv", "so_luong", "gioi_tinh", "tinh_chat", "hinh_thuc")
-  all_info %<>% mutate(link_source = job_link)
-  
-  if (length(job_name) != 0) {
-    all_info %<>% mutate(ten_cong_viec = job_name)
-  } else {
-    all_info %<>% mutate(ten_cong_viec = NA)
+  if (exists("thong_tin1") & exists("thong_tin2")) {
+    all_info <- c(thong_tin1, 
+                  thong_tin2)
+    
+    all_info <- matrix(all_info, ncol = 9) %>% as.data.frame()
+    names(all_info) <- c("luong", "kinh_nghiem", "trinh_do", "tinh", 
+                         "nhom_cv", "so_luong", "gioi_tinh", "tinh_chat", "hinh_thuc")
+    all_info %<>% mutate(link_source = job_link)
+    
+    
   }
   
-  if (length(yeu_cau) != 0) {
-    all_info %<>% mutate(yeu_cau = yeu_cau)
-  } else {
-    all_info %<>% mutate(yeu_cau = NA)
-  }
-  
-  if (length(quyen_loi) != 0) {
-    all_info %<>% mutate(quyen_loi = quyen_loi)
-  } else {
-    all_info %<>% mutate(quyen_loi = NA)
-  }
-  
-  if (length(mo_ta) != 0) {
-    all_info %<>% mutate(nhiem_vu = mo_ta)
-  } else {
-    all_info %<>% mutate(nhiem_vu = NA)
-  }
-  
-  if (length(start_date) != 0) {
-    all_info %<>% mutate(ngay_dang = start_date)
-  } else {
-    all_info %<>% mutate(ngay_dang = NA)
-  }
-  
-
-  if (length(deadline) != 0) {
-    all_info %<>% mutate(het_han = deadline)
-  } else {
-    all_info %<>% mutate(het_han = NA)
-  }
+  # if (length(job_name) != 0) {
+  #   all_info %<>% mutate(ten_cong_viec = job_name)
+  # } else {
+  #   all_info %<>% mutate(ten_cong_viec = NA)
+  # }
+  # 
+  # if (length(yeu_cau) != 0) {
+  #   all_info %<>% mutate(yeu_cau = yeu_cau)
+  # } else {
+  #   all_info %<>% mutate(yeu_cau = NA)
+  # }
+  # 
+  # if (length(quyen_loi) != 0) {
+  #   all_info %<>% mutate(quyen_loi = quyen_loi)
+  # } else {
+  #   all_info %<>% mutate(quyen_loi = NA)
+  # }
+  # 
+  # if (length(mo_ta) != 0) {
+  #   all_info %<>% mutate(nhiem_vu = mo_ta)
+  # } else {
+  #   all_info %<>% mutate(nhiem_vu = NA)
+  # }
+  # 
+  # if (length(start_date) != 0) {
+  #   all_info %<>% mutate(ngay_dang = start_date)
+  # } else {
+  #   all_info %<>% mutate(ngay_dang = NA)
+  # }
+  # 
+  # 
+  # if (length(deadline) != 0) {
+  #   all_info %<>% mutate(het_han = deadline)
+  # } else {
+  #   all_info %<>% mutate(het_han = NA)
+  # }
   
   return(all_info)
   
 }
 
 
-
-
-
 # Viết hàm lấy ra các thông tin về công việc được tuyển 
 # với đầu vào là một danh sách các link công việc: 
 
-get_information_job <- function(list_job_link) {
+get_information_job1 <- function(list_job_link) {
   n <- length(list_job_link)
   job_inf <- vector("list", length = n)
   for (i in seq_along(list_job_link)) {
@@ -213,28 +267,120 @@ get_information_job <- function(list_job_link) {
   return(job_inf)
 }
 
+# Cải tiến đoạn mã trên cho nhanh hơn nữa: 
 
+get_information_job2 <- function(list_job_link) {
+  
+  job_inf <- tryCatch(job_inf <- lapply(list_job_link, job_crawler))
+ 
+  job_inf <- do.call("bind_rows", job_inf)
+  return(job_inf)
+}
+
+# Test hàm: 
+test2 <- c("https://www.timviecnhanh.com/tuyen-chuyen-vien-kinh-doanh-xuat-nhap-khau-ho-chi-minh-3468954.html", 
+           "https://www.timviecnhanh.com/tuyen-nhan-vien-xuat-nhap-khau-ho-chi-minh-3756314.html")
+
+
+u2 <- get_information_job2(test2) # Thằng này có thể tạch vì lỗi connection. 
+u3 <- lapply(test2, get_information_job2) # Thằng này ok. 
+
+
+# Test hàm cho nhóm công việc kinh doanh: 
+u1 <- get_link_job_group2("https://www.timviecnhanh.com/viec-lam-kinh-doanh-c32.html?page=", 136)
+p <- lapply(u1$link_source, get_information_job2)
+p <- do.call("bind_rows", p)
+
+
+u2 <- get_link_job_group2("https://www.timviecnhanh.com/viec-lam-kinh-doanh-c32.html?page=", 700)
+
+# 136 page thì ứng với 2144 vị trí công việc. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#====================================
+#          Phương án 1
+#====================================
+
+
+# Chơi bằng hàm: 
+
+job_crawler_type <- function(base.url, n.pages) {
+  link_group <- get_link_job_group2(base.url, n.pages)
+  link_group$link_source -> u
+  u <- u[!duplicated(u)]
+  p <- tryCatch(
+    lapply(u, get_information_job2) -> p
+    
+  )
+  p <- do.call("bind_rows", p)
+  u <- str_locate_all(base.url, "html") %>% 
+    as.data.frame()
+  return(p %>% mutate(job_type = str_sub(base.url, start = 30, end = u$start - 6)))
+  
+}
+
+
+
+
+# Nhóm việc kinh doanh: 
+kinh_doanh_url <- "https://www.timviecnhanh.com/viec-lam-kinh-doanh-c32.html?page="
+n1 <- 2  #136
+kinh_doanh_df <- job_crawler_type(base.url = kinh_doanh_url, n.pages = n1)
+
+
+#=============================================================
+#      Sử dụng các hàm đã có để lấy dữ liệu (Phương án 2)
+#=============================================================
 
 
 # Hàm lấy ra thông tin của nhóm công việc quan tâm với thông tin đầu vào là: 
 # (1) Base url của nhóm công việc, và (2) Số pages muốn lấy: 
 
 job_crawler_type <- function(base.url, n.pages) {
-  link_group <- get_link_job_group(base.url, n.pages)
+  link_group <- get_link_job_group2(base.url, n.pages)
   link_group$link_source %>% 
-    get_information_job() %>% 
+    get_information_job2() %>% 
     return()
   
 }
 
-#=========================================
-#  Sử dụng các hàm đã có để lấy dữ liệu
-#=========================================
+
+job_crawler_type <- function(base.url, n.pages) {
+  link_group <- get_link_job_group2(base.url, n.pages)
+  link_group$link_source -> u
+  p <- tryCatch(
+    lapply(u, get_information_job2) -> p
+    
+  )
+  p <- do.call("bind_rows", p)
+  return(p)
+  
+}
+
 
 
 # Nhóm việc kinh doanh: 
 kinh_doanh_url <- "https://www.timviecnhanh.com/viec-lam-kinh-doanh-c32.html?page="
-n1 <- 240
+n1 <- 10  #136
 kinh_doanh_df <- job_crawler_type(base.url = kinh_doanh_url, n.pages = n1)
 
 # Nhóm việc bán hàng: 
@@ -374,4 +520,62 @@ tai_xe_url <- "https://www.timviecnhanh.com/viec-lam-tai-xe-lai-xe-giao-nhan-c60
 n24 <- 28
 tai_xe_df <- job_crawler_type(tai_xe_url, n24)
 
+
+# Với data frame tai_xe_df: 
+p <- tai_xe_df %>% filter(!is.na(luong))
+p$luong %>% table()
+
+
+# Hàm lấy ra thông tin về mức lương khởi điểm tối thiểu: 
+luong_lo <- function(x) {
+  l1 <- str_split(x, "-", simplify = TRUE) %>% as.data.frame() 
+  lo_wage <- l1$V1 %>% 
+    as.character() %>% 
+    str_replace_all("[^0-9]", "") %>% 
+    as.numeric()
+  return(lo_wage)
+}
+
+
+# Mức lương khởi điểm tối đa: 
+luong_up <- function(x) {
+  l1 <- str_split(x, "-", simplify = TRUE) %>% as.data.frame() 
+  up_wage <- l1$V2 %>% 
+    as.character() %>% 
+    str_replace_all("[^0-9]", "") %>% 
+    as.numeric()
+  return(up_wage)
+  
+}
+
+# Khu vực địa lí theo tỉnh của công việc được tuyển: 
+province_extract <- function(x) {
+  u <- x %>% 
+    str_split(",", simplify = TRUE) %>% 
+    as.data.frame()
+  
+  u$V1 %>% 
+    as.character() %>% 
+    str_replace_all("Việc làm", "") %>% 
+    str_trim() %>% 
+    return()
+  
+}
+
+
+# Hàm lấy ra thông tin về nhóm công việc: 
+
+job_category <- function(x) {
+  x %<>%  
+    as.character()
+  
+  s1 <- 39
+  s2 <- x %>% 
+    str_locate_all("[0-9]") %>% 
+    as.data.frame()
+  return(str_sub(x, start = s1, end = s2[1, 1] - 3))
+}
+
+
+# write.csv(p, "D:/p_test_job.csv", row.names = FALSE)
 
